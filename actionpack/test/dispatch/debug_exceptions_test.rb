@@ -128,36 +128,32 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   Interceptor = proc { |request, exception| request.set_header("int", exception) }
   BadInterceptor = proc { |request, exception| raise "bad" }
   RoutesApp = Struct.new(:routes).new(SharedTestRoutes)
-  ProductionApp  = ActionDispatch::DebugExceptions.new(Boomer.new(false), RoutesApp)
-  DevelopmentApp = ActionDispatch::DebugExceptions.new(Boomer.new(true), RoutesApp)
-  InterceptedApp = ActionDispatch::DebugExceptions.new(Boomer.new(true), RoutesApp, :default, [Interceptor])
-  BadInterceptedApp = ActionDispatch::DebugExceptions.new(Boomer.new(true), RoutesApp, :default, [BadInterceptor])
-  ApiApp = ActionDispatch::DebugExceptions.new(Boomer.new(true), RoutesApp, :api)
+
 
   test "skip diagnosis if not showing detailed exceptions" do
-    @app = ProductionApp
+    @app = build_app(:production)
     assert_raise RuntimeError do
       get "/", headers: { "action_dispatch.show_exceptions" => :all }
     end
   end
 
   test "skip diagnosis if not showing exceptions" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     assert_raise RuntimeError do
       get "/", headers: { "action_dispatch.show_exceptions" => :none }
     end
   end
 
   test "raise an exception on cascade pass" do
-    @app = ProductionApp
+    @app = build_app(:production)
     assert_raise ActionController::RoutingError do
       get "/pass", headers: { "action_dispatch.show_exceptions" => :all }
     end
   end
 
   test "closes the response body on cascade pass" do
-    boomer = Boomer.new(false)
-    @app = ActionDispatch::DebugExceptions.new(boomer)
+    boomer = Rack::Lint.new(Boomer.new(false))
+    @app = Rack::Lint.new(ActionDispatch::DebugExceptions.new(boomer))
     assert_raise ActionController::RoutingError do
       get "/pass", headers: { "action_dispatch.show_exceptions" => :all }
     end
@@ -165,7 +161,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "displays routes in a table when a RoutingError occurs" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     get "/pass", headers: { "action_dispatch.show_exceptions" => :all }
     routing_table = body[/route_table.*<.table>/m]
     assert_match "/:controller(/:action)(.:format)", routing_table
@@ -174,7 +170,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "displays request and response info when a RoutingError occurs" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/pass", headers: { "action_dispatch.show_exceptions" => :all }
 
@@ -183,7 +179,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "rescue with diagnostics message" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 500
@@ -222,7 +218,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "rescue with text error for xhr request" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     xhr_request_env = { "action_dispatch.show_exceptions" => :all, "HTTP_X_REQUESTED_WITH" => "XMLHttpRequest" }
 
     get "/", headers: xhr_request_env
@@ -272,7 +268,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "rescue with JSON error for JSON API request" do
-    @app = ApiApp
+    @app = build_app(:api)
 
     get "/", headers: { "action_dispatch.show_exceptions" => :all }, as: :json
     assert_response 500
@@ -319,7 +315,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "rescue with suggestions" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/not_found", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 404
@@ -333,7 +329,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "rescue with HTML format for HTML API request" do
-    @app = ApiApp
+    @app = build_app(:api)
 
     get "/index.html", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 500
@@ -344,7 +340,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "rescue with XML format for XML API requests" do
-    @app = ApiApp
+    @app = build_app(:api)
 
     get "/index.xml", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 500
@@ -358,7 +354,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
     ActionDispatch::IntegrationTest.register_encoder(:wibble,
       param_encoder: -> params { params })
 
-    @app = ApiApp
+    @app = build_app(:api)
 
     get "/index", headers: { "action_dispatch.show_exceptions" => :all }, as: :wibble
     assert_response 500
@@ -370,7 +366,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "does not show filtered parameters" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/", params: { "foo" => "bar" }, headers: { "action_dispatch.show_exceptions" => :all,
       "action_dispatch.parameter_filter" => [:foo] }
@@ -379,7 +375,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "show registered original exception if the last exception is TemplateError" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/not_found_original_exception", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 404
@@ -388,7 +384,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "show the last exception and cause even when the cause is mapped to resque_responses" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/cause_mapped_to_rescue_responses", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 500
@@ -397,7 +393,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "named URLs missing keys raise 500 level error" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/missing_keys", headers: { "action_dispatch.show_exceptions" => :all }
     assert_response 500
@@ -406,7 +402,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "show the controller name in the diagnostics template when controller name is present" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     get("/runtime_error", headers: {
       "action_dispatch.show_exceptions" => :all,
       "action_dispatch.request.parameters" => {
@@ -420,7 +416,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "show formatted params" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     params = {
       "id" => "unknown",
@@ -443,21 +439,21 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "sets the HTTP charset parameter" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/", headers: { "action_dispatch.show_exceptions" => :all }
     assert_equal "text/html; charset=utf-8", response.headers["Content-Type"]
   end
 
   test "uses logger from env" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     output = StringIO.new
     get "/", headers: { "action_dispatch.show_exceptions" => :all, "action_dispatch.logger" => Logger.new(output) }
     assert_match(/puke/, output.rewind && output.read)
   end
 
   test "logs at configured log level" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     output = StringIO.new
     logger = Logger.new(output)
     logger.level = Logger::WARN
@@ -470,7 +466,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "logs only what is necessary" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     io = StringIO.new
     logger = ActiveSupport::Logger.new(io)
 
@@ -493,7 +489,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "logs with non active support loggers" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     io = StringIO.new
     logger = Logger.new(io)
 
@@ -510,7 +506,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "uses backtrace cleaner from env" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     backtrace_cleaner = ActiveSupport::BacktraceCleaner.new
 
     backtrace_cleaner.stub :clean, ["passed backtrace cleaner"] do
@@ -520,7 +516,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "logs exception backtrace when all lines silenced" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     output = StringIO.new
     backtrace_cleaner = ActiveSupport::BacktraceCleaner.new
@@ -535,7 +531,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "doesn't log the framework backtrace when error type is a routing error" do
-    @app = ProductionApp
+    @app = build_app(:production)
 
     output = StringIO.new
     backtrace_cleaner = ActiveSupport::BacktraceCleaner.new
@@ -557,7 +553,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "doesn't log the framework backtrace when error type is a invalid mime type" do
-    @app = ProductionApp
+    @app = build_app(:production)
 
     output = StringIO.new
     backtrace_cleaner = ActiveSupport::BacktraceCleaner.new
@@ -580,7 +576,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "skips logging when rescued and log_rescued_responses is false" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     output = StringIO.new
 
@@ -594,7 +590,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "does not skip logging when rescued and log_rescued_responses is true" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     output = StringIO.new
 
@@ -608,7 +604,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "display backtrace when error type is SyntaxError" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/original_syntax_error", headers: { "action_dispatch.backtrace_cleaner" => ActiveSupport::BacktraceCleaner.new }
 
@@ -619,7 +615,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "display backtrace on template missing errors" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/missing_template"
 
@@ -635,7 +631,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "display backtrace when error type is SyntaxError wrapped by ActionView::Template::Error" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/syntax_error_into_view", headers: { "action_dispatch.backtrace_cleaner" => ActiveSupport::BacktraceCleaner.new }
 
@@ -647,7 +643,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "debug exceptions app shows user code that caused the error in source view" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     Rails.stub :root, Pathname.new(".") do
       cleaner = ActiveSupport::BacktraceCleaner.new.tap do |bc|
         bc.add_silencer { |line| line.match?(/method_that_raises/) }
@@ -685,14 +681,14 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "invoke interceptors before rendering" do
-    @app = InterceptedApp
+    @app = build_app(:intercepted)
     get "/intercepted_error", headers: { "action_dispatch.show_exceptions" => :all }
 
     assert_equal InterceptedErrorInstance, request.get_header("int")
   end
 
   test "bad interceptors doesn't debug exceptions" do
-    @app = BadInterceptedApp
+    @app = build_app(:bad_intercepted)
 
     get "/puke", headers: { "action_dispatch.show_exceptions" => :all }
 
@@ -701,7 +697,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "debug exceptions app shows all the nested exceptions in source view" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     Rails.stub :root, Pathname.new(".") do
       cleaner = ActiveSupport::BacktraceCleaner.new.tap do |bc|
         bc.add_silencer { |line| !line.match?(%r{test/dispatch/debug_exceptions_test.rb}) }
@@ -738,7 +734,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "shows a buttons for every action in an actionable error" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     Rails.stub :root, Pathname.new(".") do
       cleaner = ActiveSupport::BacktraceCleaner.new.tap do |bc|
         bc.add_silencer { |line| !line.match?(%r{test/dispatch/debug_exceptions_test.rb}) }
@@ -755,7 +751,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "debug exceptions app shows diagnostics when malformed query parameters are provided" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     get "/bad_request?x[y]=1&x[y][][w]=2"
 
@@ -764,7 +760,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "debug exceptions app shows diagnostics when malformed query parameters are provided by XHR" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
     xhr_request_env = { "action_dispatch.show_exceptions" => :all, "HTTP_X_REQUESTED_WITH" => "XMLHttpRequest" }
 
     get "/bad_request?x[y]=1&x[y][][w]=2", headers: xhr_request_env
@@ -774,7 +770,7 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
   end
 
   test "debug exceptions app shows diagnostics for template errors that contain UTF-8 characters" do
-    @app = DevelopmentApp
+    @app = build_app(:development)
 
     io = StringIO.new
     logger = ActiveSupport::Logger.new(io)
@@ -785,4 +781,23 @@ class DebugExceptionsTest < ActionDispatch::IntegrationTest
     assert_select "#container p", /Showing #{__FILE__} where line #\d+ raised/
     assert_select "#container code", /undefined local variable or method `string”'/
   end
+
+  private
+    def build_app(type)
+      boomer_instance = Rack::Lint.new(Boomer.new(true))
+
+      app = case type
+            when :production
+              ActionDispatch::DebugExceptions.new(Rack::Lint.new(Boomer.new(false)), RoutesApp)
+            when :development
+              ActionDispatch::DebugExceptions.new(boomer_instance, RoutesApp)
+            when :intercepted
+              ActionDispatch::DebugExceptions.new(boomer_instance, RoutesApp, :default, [Interceptor])
+            when :bad_intercepted
+              ActionDispatch::DebugExceptions.new(boomer_instance, RoutesApp, :default, [BadInterceptor])
+            when :api
+              ActionDispatch::DebugExceptions.new(boomer_instance, RoutesApp, :api)
+      end
+      Rack::Lint.new(app)
+    end
 end
